@@ -1561,14 +1561,24 @@ document.getElementById("modalDownloadBtn").addEventListener("click", async () =
     setTimeout(() => { dlBtn.classList.remove("copied"); label.textContent = originalText; }, 1800);
   }catch(err){
     console.error("Download failed:", err);
-    if(err && err.code === "declined"){
+    const code = err && err.code;
+    if(code === "declined"){
       label.textContent = originalText;
-    } else if(err && err.code === "unavailable"){
-      label.textContent = "Downloads unavailable here";
-      setTimeout(() => { label.textContent = originalText; }, 2200);
     } else {
-      label.textContent = "Failed to download";
-      setTimeout(() => { label.textContent = originalText; }, 2200);
+      const msgByCode = {
+        unavailable: "Downloads unavailable here",
+        not_granted: "Download not permitted",
+        capability_disabled: "Downloads disabled here",
+        capability_removed: "Downloads disabled here",
+        rejected_extension: "File type not allowed",
+        extension_not_enabled: "File type not allowed here",
+        too_large: "File too large",
+        rate_limited: "Try again in a moment",
+        bad_request: "Download error",
+        transform_error: "Download error"
+      };
+      label.textContent = (code && msgByCode[code]) || "Failed to download";
+      setTimeout(() => { label.textContent = originalText; }, 2600);
     }
   }
 });
@@ -1576,15 +1586,33 @@ document.getElementById("modalDownloadBtn").addEventListener("click", async () =
 async function triggerDownload(canvas, filename){
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
   if(!blob) throw new Error("Failed to render image");
-  const downloads = (window.claude && typeof window.claude.use === "function")
-    ? await window.claude.use("downloads")
-    : null;
-  if(!downloads){
-    const err = new Error("Downloads not available in this view");
-    err.code = "unavailable";
-    throw err;
+  const name = filename || "contractor-summary.png";
+
+  // Inside the claude.ai artifact viewer: use the platform's downloads
+  // capability (the viewer confirms the save).
+  if(window.claude && typeof window.claude.use === "function"){
+    try{
+      const downloads = await window.claude.use("downloads");
+      if(downloads){
+        return await downloads.save({ filename: name, data: blob });
+      }
+    }catch(err){
+      if(err && err.code && err.code !== "unavailable") throw err;
+      // otherwise fall through to the plain-browser download below
+    }
   }
-  return await downloads.save({ filename: filename || "contractor-summary.png", data: blob });
+
+  // Outside claude.ai (e.g. this file opened directly or hosted on
+  // GitHub Pages): a normal browser download works fine here.
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  return { status: "saved" };
 }
 </script>
 </body>
