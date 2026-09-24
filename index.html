@@ -65,6 +65,17 @@
   .headline{ margin-bottom:14px; }
   .headline .value{ font-size:30px; font-weight:900; line-height:1.1; }
   .headline .label{ font-size:12px; color:var(--ink-soft); margin-top:2px; }
+
+  .target-progress{ margin-bottom:14px; }
+  .target-progress-top{ display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+  .target-progress-pct{ font-size:20px; font-weight:900; color:#DC2626; }
+  .target-progress-pct.achieved{ color:var(--c2); }
+  .target-progress-of{ font-size:14px; font-weight:700; color:var(--ink); margin-inline-start:4px; }
+  .target-progress-badge{ font-size:12px; font-weight:800; padding:5px 10px; border-radius:999px; background:#FEF2F2; color:#DC2626; white-space:nowrap; }
+  .target-progress-badge.achieved{ background:var(--c2-bg); color:var(--c2); }
+  .target-progress-track{ width:100%; height:10px; border-radius:5px; background:var(--border); overflow:hidden; }
+  .target-progress-fill{ height:100%; border-radius:5px; background:#DC2626; }
+  .target-progress-fill.achieved{ background:var(--c2); }
   .stats{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:16px; }
   .stat{ border-radius:8px; padding:8px 10px; background:var(--stat-bg); }
   .stat .stat-value{ font-weight:700; font-size:15px; color:var(--stat-color); }
@@ -94,6 +105,13 @@
   .hub-daily-legend{ display:flex; gap:16px; margin-bottom:12px; }
   .hub-daily-legend .legend-chip{ display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--ink); }
   .hub-daily-legend .legend-chip .dot{ width:10px; height:10px; border-radius:50%; flex:none; }
+  .hub-modal-nav-btn{
+    margin-inline-start:auto; flex:none; display:inline-flex; align-items:center; gap:6px;
+    background:var(--bg); border:1px solid var(--border); border-radius:8px;
+    padding:8px 12px; font-family:'Inter',sans-serif; font-size:13px; font-weight:700;
+    color:var(--ink); cursor:pointer;
+  }
+  .hub-modal-nav-btn:hover{ border-color:var(--c1); color:var(--c1); }
   .fc-chart-box{ position:relative; height:320px; width:100%; }
   .fc-chart-box canvas{ max-width:100%; }
   .fc-stats{ display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
@@ -386,6 +404,8 @@ const contractors = EMBEDDED_DATA.contractors;
 
 function fmt(n){ return (n||0).toLocaleString("en-US"); }
 function missingFor(name, total){ return Math.max((TARGETS[name] || 0) - total, 0); }
+function pctOfTarget(name, total){ const t = TARGETS[name] || 0; return t > 0 ? Math.round((total / t) * 100) : (total > 0 ? 100 : 0); }
+const LATEST_DATE_LABEL = HUB_DAILY_DATES.length ? HUB_DAILY_DATES[HUB_DAILY_DATES.length - 1] : "";
 
 function renderKPIs(){
   const totalStars = contractors.reduce((a,c)=>a+c.total,0);
@@ -435,6 +455,7 @@ function renderGrid(){
     const hubItems = CONTRACTOR_HUBS[c.name] || [];
     const target = TARGETS[c.name] || 0;
     const missing = missingFor(c.name, c.total);
+    const pct = pctOfTarget(c.name, c.total);
     return `
     <div class="card">
       <div class="card-head">
@@ -454,6 +475,17 @@ function renderGrid(){
         <div class="value num">${fmt(c.total)}</div>
         <div class="label">Total Stars</div>
       </div>
+      <div class="target-progress">
+        <div class="target-progress-top">
+          <div class="target-progress-pct${missing <= 0 ? ' achieved' : ''}">${pct}%<span class="target-progress-of">of target (${fmt(target)})</span></div>
+          ${missing > 0
+            ? `<div class="target-progress-badge">-${fmt(missing)} missing</div>`
+            : `<div class="target-progress-badge achieved">+${fmt(c.total - target)} over</div>`}
+        </div>
+        <div class="target-progress-track">
+          <div class="target-progress-fill${missing <= 0 ? ' achieved' : ''}" style="width:${Math.min(pct,100)}%"></div>
+        </div>
+      </div>
       <div class="stats">
         ${topStatuses.map((st,i) => `
           <div class="stat" style="--stat-bg:${STATUS_COLORS[i % STATUS_COLORS.length].bg}; --stat-color:${STATUS_COLORS[i % STATUS_COLORS.length].c}">
@@ -461,17 +493,9 @@ function renderGrid(){
             <div class="stat-label">${st}</div>
           </div>
         `).join("")}
-        <div class="stat" style="--stat-bg:var(--bg); --stat-color:var(--ink-soft)">
-          <div class="stat-value num">${fmt(target)}</div>
-          <div class="stat-label">Target</div>
-        </div>
-        <div class="stat" style="--stat-bg:#FEF2F2; --stat-color:#DC2626">
-          <div class="stat-value num">${fmt(missing)}</div>
-          <div class="stat-label">Missing</div>
-        </div>
         <div class="stat" style="grid-column:1/-1; --stat-bg:var(--info-bg); --stat-color:var(--info)">
           <div class="stat-value num">${fmt(TODAY_ACQ[c.name] || 0)}</div>
-          <div class="stat-label">New Stars Today</div>
+          <div class="stat-label">New Stars Today${LATEST_DATE_LABEL ? ` (${LATEST_DATE_LABEL})` : ''}</div>
         </div>
       </div>
       ${hubItems.length ? `
@@ -1324,9 +1348,44 @@ function initForecasts(){
 
 // --- Large view modal + copy-as-image ---
 let modalChart = null;
-// --- ACQ Trend: per-hub daily breakdown modal ---
+// --- ACQ Trend: per-hub daily breakdown modal, with a second "by contractor" page ---
 let hubDailyChartInstance = null;
+let hubModalState = { name: null, page: "daily" };
+
+function hubContractorBreakdown(hubName){
+  const rows = [];
+  Object.entries(CONTRACTOR_HUBS).forEach(([contractor, hubs]) => {
+    const found = hubs.find(h => h.name === hubName);
+    if(found) rows.push({ name: contractor, count: found.count });
+  });
+  rows.sort((a,b) => b.count - a.count);
+  return rows;
+}
+
 function openHubDailyModal(hubName){
+  hubModalState = { name: hubName, page: "daily" };
+  renderHubModal();
+  document.getElementById("hubDailyOverlay").style.display = "flex";
+}
+
+function renderHubModal(){
+  if(hubModalState.page === "contractor"){
+    renderHubContractorPage(hubModalState.name);
+  } else {
+    renderHubDailyPage(hubModalState.name);
+  }
+}
+
+function attachHubModalNav(){
+  const btn = document.getElementById("hubModalNavBtn");
+  if(!btn) return;
+  btn.addEventListener("click", () => {
+    hubModalState.page = hubModalState.page === "daily" ? "contractor" : "daily";
+    renderHubModal();
+  });
+}
+
+function renderHubDailyPage(hubName){
   const daily = HUB_DAILY[hubName] || {};
   const newStarValues = HUB_DAILY_DATES.map(d => (daily[d] && daily[d]["New Star"]) || 0);
   const reactivateValues = HUB_DAILY_DATES.map(d => (daily[d] && daily[d]["Reactivate"]) || 0);
@@ -1340,6 +1399,7 @@ function openHubDailyModal(hubName){
         <circle cx="12" cy="10" r="2.5"/>
       </svg>
       <span class="name">${hubName}</span>
+      <button class="hub-modal-nav-btn" id="hubModalNavBtn" type="button">By contractor <span>&#9656;</span></button>
     </div>
     <div class="modal-headline" style="margin-bottom:18px;">
       <div class="value num">${fmt(total)}</div>
@@ -1353,6 +1413,7 @@ function openHubDailyModal(hubName){
       <div class="fc-chart-box" style="height:280px;"><canvas id="hubDailyChart"></canvas></div>
     </div>
   `;
+  attachHubModalNav();
 
   if(hubDailyChartInstance){ hubDailyChartInstance.destroy(); hubDailyChartInstance = null; }
   const ctx = document.getElementById("hubDailyChart");
@@ -1419,8 +1480,66 @@ function openHubDailyModal(hubName){
     }]
   });
   requestAnimationFrame(() => hubDailyChartInstance.resize());
+}
 
-  document.getElementById("hubDailyOverlay").style.display = "flex";
+function renderHubContractorPage(hubName){
+  const rows = hubContractorBreakdown(hubName);
+  const total = rows.reduce((a,r) => a + r.count, 0);
+
+  document.getElementById("hubDailyCapture").innerHTML = `
+    <div class="modal-head">
+      <svg class="pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 21s-7-6.1-7-11a7 7 0 0 1 14 0c0 4.9-7 11-7 11z"/>
+        <circle cx="12" cy="10" r="2.5"/>
+      </svg>
+      <span class="name">${hubName}</span>
+      <button class="hub-modal-nav-btn" id="hubModalNavBtn" type="button"><span>&#9666;</span> Daily</button>
+    </div>
+    <div class="modal-headline" style="margin-bottom:18px;">
+      <div class="value num">${fmt(total)}</div>
+      <div class="label">Total reps by contractor (${rows.length} contractors)</div>
+    </div>
+    <div class="fc-chart-card" style="margin-bottom:0;">
+      <div class="fc-chart-box" style="height:320px;"><canvas id="hubContractorChart"></canvas></div>
+    </div>
+  `;
+  attachHubModalNav();
+
+  if(hubDailyChartInstance){ hubDailyChartInstance.destroy(); hubDailyChartInstance = null; }
+  if(rows.length === 0) return;
+  const ctx = document.getElementById("hubContractorChart");
+  hubDailyChartInstance = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: rows.map(r => r.name),
+      datasets: [{
+        data: rows.map(r => r.count),
+        backgroundColor: "#059669",
+        borderRadius: { topLeft: 5, topRight: 5, bottomLeft: 0, bottomRight: 0 },
+        maxBarThickness: 34
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: { padding: { top: 24 } },
+      plugins: {
+        legend: { display: false },
+        datalabels: {
+          display: (ctx2) => ctx2.dataset.data[ctx2.dataIndex] > 0,
+          anchor: "end", align: "top", clip: false,
+          color: "#14181F", font: { weight: "bold", size: 10 },
+          formatter: v => v
+        },
+        tooltip: { enabled: true }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { autoSkip: false, maxRotation: 60, minRotation: 45 } },
+        y: { beginAtZero: true, grid: { color: "#EEE" } }
+      }
+    }
+  });
+  requestAnimationFrame(() => hubDailyChartInstance.resize());
 }
 
 document.getElementById("hubDailyCloseBtn").addEventListener("click", () => {
@@ -1436,6 +1555,7 @@ function openCardModal(name){
   const hubItems = CONTRACTOR_HUBS[c.name] || [];
   const target = TARGETS[c.name] || 0;
   const missing = missingFor(c.name, c.total);
+  const pct = pctOfTarget(c.name, c.total);
 
   document.getElementById("modalCapture").innerHTML = `
     <div class="modal-head">
@@ -1451,6 +1571,17 @@ function openCardModal(name){
           <div class="value num">${fmt(c.total)}</div>
           <div class="label">Total Stars</div>
         </div>
+        <div class="target-progress" style="margin-bottom:18px;">
+          <div class="target-progress-top">
+            <div class="target-progress-pct${missing <= 0 ? ' achieved' : ''}">${pct}%<span class="target-progress-of">of target (${fmt(target)})</span></div>
+            ${missing > 0
+              ? `<div class="target-progress-badge">-${fmt(missing)} missing</div>`
+              : `<div class="target-progress-badge achieved">+${fmt(c.total - target)} over</div>`}
+          </div>
+          <div class="target-progress-track">
+            <div class="target-progress-fill${missing <= 0 ? ' achieved' : ''}" style="width:${Math.min(pct,100)}%"></div>
+          </div>
+        </div>
         <div class="modal-stats">
           ${topStatuses.map((st,i) => `
             <div class="mstat" style="--stat-bg:${STATUS_COLORS[i % STATUS_COLORS.length].bg}; --stat-color:${STATUS_COLORS[i % STATUS_COLORS.length].c}">
@@ -1458,17 +1589,9 @@ function openCardModal(name){
               <div class="mlabel">${st}</div>
             </div>
           `).join("")}
-          <div class="mstat" style="--stat-bg:var(--bg); --stat-color:var(--ink-soft)">
-            <div class="mval num">${fmt(target)}</div>
-            <div class="mlabel">Target</div>
-          </div>
-          <div class="mstat" style="--stat-bg:#FEF2F2; --stat-color:#DC2626">
-            <div class="mval num">${fmt(missing)}</div>
-            <div class="mlabel">Missing</div>
-          </div>
-          <div class="mstat" style="--stat-bg:var(--info-bg); --stat-color:var(--info)">
+          <div class="mstat" style="grid-column:1/-1; --stat-bg:var(--info-bg); --stat-color:var(--info)">
             <div class="mval num">${fmt(TODAY_ACQ[c.name] || 0)}</div>
-            <div class="mlabel">New Stars Today</div>
+            <div class="mlabel">New Stars Today${LATEST_DATE_LABEL ? ` (${LATEST_DATE_LABEL})` : ''}</div>
           </div>
         </div>
       </div>
